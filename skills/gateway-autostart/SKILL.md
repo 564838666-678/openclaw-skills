@@ -24,7 +24,7 @@
 # ============================================================
 
 $taskName = "OpenClaw Gateway"
-$checkInterval = 30           # 检查间隔：30秒
+$checkInterval = 60           # 检查间隔：60秒，资源占用更低
 $restartCooldown = 300        # 重启后冷却：5分钟
 $maxRestartsPerHour = 3       # 1小时内最多重启3次，防止死循环
 $gatewayPort = 18789          # Gateway 默认端口
