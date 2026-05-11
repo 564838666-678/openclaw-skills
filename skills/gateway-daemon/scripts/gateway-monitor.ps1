@@ -33,7 +33,9 @@ while ($true) {
         -InformationLevel Quiet
 
     if (-not $tcp) {
-        Log-Message "Gateway DOWN. Launching gateway.cmd..."
+        Log-Message "Gateway DOWN. Ending old task instance and restarting..."
+        schtasks /end /tn "OpenClaw Gateway" > $null 2>&1
+        Start-Sleep -Seconds 3
         schtasks /run /tn "OpenClaw Gateway" > $null 2>&1
         Start-Sleep -Seconds 5  # Give gateway time to start before next check
     }

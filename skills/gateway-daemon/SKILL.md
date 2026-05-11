@@ -16,6 +16,9 @@ gateway-monitor.ps1 (daemon, Session-agnostic)
   Gateway down?
     │
     ▼ YES
+schtasks /end "OpenClaw Gateway"  (clear zombie state)
+    │  wait 3s
+    ▼
 schtasks /run "OpenClaw Gateway"
     │  runs in user's interactive session
     ▼
@@ -25,7 +28,7 @@ gateway.cmd → node gateway.exe (VISIBLE window on desktop)
 **Key design decisions:**
 
 - Monitor runs as **independent PowerShell process** outside the gateway's process tree — survives `gateway restart` or crash
-- Uses `schtasks /run` (not `Start-Process`) to launch gateway — avoids Windows Session 0 isolation where spawned windows are invisible
+- Uses `schtasks /end` then `schtasks /run` to launch gateway — `/end` clears zombie task state before restart, `/run` avoids Windows Session 0 isolation where spawned windows are invisible
 - Registry Run key ensures monitor auto-starts on Windows login
 - Lock file prevents duplicate monitor instances
 - Logs all restart events with timestamps
@@ -73,6 +76,7 @@ What it does:
 | Duplicate gateway instances | Old scheduled task also launching | Check `schtasks /query /tn "OpenClaw Gateway"` |
 | Monitor not starting | Registry Run key disabled | Manually run: `powershell -File ~\.openclaw\workspace\gateway-monitor.ps1` |
 | Monitor log shows repeated "DOWN" | Gateway crashing immediately | Check `openclaw doctor`, review gateway error logs |
+| Monitor detects DOWN but gateway never restarts | Scheduled task stuck in "running" state with dead process (zombie) | Update monitor script to v2+ (includes `schtasks /end` before `/run`); or manually: `schtasks /end /tn "OpenClaw Gateway"` then `schtasks /run /tn "OpenClaw Gateway"` |
 
 ## Pre-requisites
 

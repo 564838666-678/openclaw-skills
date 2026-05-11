@@ -1,75 +1,44 @@
-# ============================================================
-# OpenClaw Gateway 监控脚本（最终版）
-# 功能：网关挂了30秒内自动重启
-# 特性：端口检查100%准确 + 重启风暴保护 + 零资源占用
-# ============================================================
+# OpenClaw Gateway Monitor - Independent Daemon
+# Runs outside gateway process tree, auto-restarts gateway if down
+# PID: uses lock file to prevent duplicate instances
 
-$taskName = "OpenClaw Gateway"
-$checkInterval = 60           # 检查间隔：60秒，资源占用更低
-$restartCooldown = 300        # 重启后冷却：5分钟
-$maxRestartsPerHour = 3       # 1小时内最多重启3次，防止死循环
-$gatewayPort = 18789          # Gateway 默认端口
-$logFile = "C:\Users\87682\.openclaw\workspace\gateway-monitor.log"
+$lockFile = "$env:USERPROFILE\.openclaw\gateway-monitor.lock"
+$gatewayCmd = "$env:USERPROFILE\.openclaw\gateway.cmd"
+$logFile = "$env:USERPROFILE\.openclaw\gateway-monitor.log"
+$checkInterval = 10  # seconds
 
-# 状态变量（内存中，不写盘
-$restartHistory = @()
-$lastRestartTime = $null
-
-# 极简日志：只有重启时才写盘，正常运行零IO
-function Write-Log {
-    param($message)
-    $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
-    "[$timestamp] $message" | Out-File -Append $logFile -Encoding UTF8
-}
-
-# 健康检查：只查端口，100%准确，比查进程快10倍
-function Test-GatewayHealth {
-    try {
-        $tcpClient = New-Object System.Net.Sockets.TcpClient
-        $tcpClient.Connect("127.0.0.1", $gatewayPort)
-        $tcpClient.Close()
-        return $true
-    } catch {
-        return $false
+# Prevent duplicate instances
+if (Test-Path $lockFile) {
+    $oldPid = Get-Content $lockFile
+    $oldProc = Get-Process -Id $oldPid -ErrorAction SilentlyContinue
+    if ($oldProc -and $oldProc.ProcessName -eq "powershell") {
+        Write-Host "Monitor already running (pid $oldPid)"
+        exit 0
     }
 }
+$pid | Out-File -FilePath $lockFile -Force
 
-# 重启风暴保护
-function Test-CanRestart {
-    $oneHourAgo = (Get-Date).AddHours(-1)
-    $recentRestarts = $restartHistory | Where-Object { $_ -gt $oneHourAgo }
-    return ($recentRestarts.Count -lt $maxRestartsPerHour)
+function Log-Message {
+    param($Msg)
+    $line = "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] $Msg"
+    Write-Host $line
+    Add-Content -Path $logFile -Value $line
 }
 
-# 启动日志只写一次
-Write-Log "Gateway monitor started"
-Write-Log "  - Check interval: $checkInterval seconds"
-Write-Log "  - Restart cooldown: $restartCooldown seconds"
-Write-Log "  - Max restarts per hour: $maxRestartsPerHour"
+Log-Message "Monitor started (pid $pid). Checking gateway on port 18789 every ${checkInterval}s..."
 
-# 主循环
 while ($true) {
-    # 重启冷却期：刚重启完5分钟内不检查
-    if ($lastRestartTime -and ((Get-Date) - $lastRestartTime).TotalSeconds -lt $restartCooldown) {
-        Start-Sleep $checkInterval
-        continue
+    $tcp = Test-NetConnection -ComputerName 127.0.0.1 -Port 18789 `
+        -WarningAction SilentlyContinue -ErrorAction SilentlyContinue `
+        -InformationLevel Quiet
+
+    if (-not $tcp) {
+        Log-Message "Gateway DOWN. Ending old task instance and restarting..."
+        schtasks /end /tn "OpenClaw Gateway" > $null 2>&1
+        Start-Sleep -Seconds 3
+        schtasks /run /tn "OpenClaw Gateway" > $null 2>&1
+        Start-Sleep -Seconds 5  # Give gateway time to start before next check
     }
-    
-    # 健康检查（几毫秒完事）
-    if (-not (Test-GatewayHealth)) {
-        if (Test-CanRestart) {
-            Write-Log "WARNING: Gateway not responding, restarting..."
-            try {
-                Start-ScheduledTask -TaskName $taskName -ErrorAction Stop
-                $lastRestartTime = Get-Date
-                $restartHistory += $lastRestartTime
-                Write-Log "SUCCESS: Gateway restarted"
-            } catch {
-                Write-Log "ERROR: Restart failed: $_"
-            }
-        }
-    }
-    
-    # 检查完马上睡觉，零CPU占用
-    Start-Sleep $checkInterval
+
+    Start-Sleep -Seconds $checkInterval
 }
